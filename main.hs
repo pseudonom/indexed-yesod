@@ -13,10 +13,10 @@ mkYesod "HelloWorld" [parseRoutes|
 
 instance Yesod HelloWorld
 
-type Handler' = ReaderT () (HandlerT HelloWorld IO)
+-- type Handler' = ReaderT () (HandlerT HelloWorld IO)
 
-getHomeR :: Handler' Html
-getHomeR = lift $ defaultLayout [whamlet|Hello World!|]
+getHomeR :: Handler Html
+getHomeR = defaultLayout [whamlet|Hello World!|]
 
 main :: IO ()
 main = warp 3000 HelloWorld
