@@ -32,13 +32,13 @@ import Yesod.Core.Internal.Run
 mkYesod :: String -- ^ name of the argument datatype
         -> [ResourceTree String]
         -> Q [Dec]
-mkYesod name = fmap (uncurry (++)) . mkYesodGeneral name [] False
+mkYesod name = fmap (uncurry (++)) . mkYesodGeneral name [] False False
 
 mkYesodWith :: String
             -> [Either String [String]]
             -> [ResourceTree String]
             -> Q [Dec]
-mkYesodWith name args = fmap (uncurry (++)) . mkYesodGeneral name args False
+mkYesodWith name args = fmap (uncurry (++)) . mkYesodGeneral name args False False
 
 -- | Sometimes, you will want to declare your routes in one file and define
 -- your handlers elsewhere. For example, this is the only way to break up a
@@ -53,11 +53,11 @@ mkYesodSubData name res = mkYesodDataGeneral name True res
 mkYesodDataGeneral :: String -> Bool -> [ResourceTree String] -> Q [Dec]
 mkYesodDataGeneral name isSub res = do
     let (name':rest) = words name
-    fmap fst $ mkYesodGeneral name' (fmap Left rest) isSub res
+    fmap fst $ mkYesodGeneral name' (fmap Left rest) isSub False res
 
 -- | See 'mkYesodData'.
 mkYesodDispatch :: String -> [ResourceTree String] -> Q [Dec]
-mkYesodDispatch name = fmap snd . mkYesodGeneral name [] False
+mkYesodDispatch name = fmap snd . mkYesodGeneral name [] False False
 
 -- | Get the Handler and Widget type synonyms for the given site.
 masterTypeSyns :: [Name] -> Type -> [Dec]
@@ -74,9 +74,10 @@ masterTypeSyns vs site =
 mkYesodGeneral :: String                   -- ^ foundation type
                -> [Either String [String]] -- ^ arguments for the type
                -> Bool                     -- ^ is this a subsite
+               -> Bool                     -- ^ do we need to accept generalized handlers
                -> [ResourceTree String]
                -> Q([Dec],[Dec])
-mkYesodGeneral namestr args isSub resS = do
+mkYesodGeneral namestr args isSub shouldUnwrap resS = do
     mname <- lookupTypeName namestr
     arity <- case mname of
                Just name -> do
@@ -112,7 +113,7 @@ mkYesodGeneral namestr args isSub resS = do
         res = map (fmap parseType) resS
     renderRouteDec <- mkRenderRouteInstance site res
     routeAttrsDec  <- mkRouteAttrsInstance site res
-    dispatchDec    <- mkDispatchInstance site cxt res
+    dispatchDec    <- mkDispatchInstance site cxt shouldUnwrap res
     parse <- mkParseRouteInstance site res
     let rname = mkName $ "resources" ++ namestr
     eres <- lift resS
@@ -129,8 +130,8 @@ mkYesodGeneral namestr args isSub resS = do
             ]
     return (dataDec, dispatchDec)
 
-mkMDS :: Q Exp -> MkDispatchSettings
-mkMDS rh = MkDispatchSettings
+mkMDS :: Bool -> Q Exp -> MkDispatchSettings
+mkMDS shouldUnwrap rh = MkDispatchSettings
     { mdsRunHandler = rh
     , mdsSubDispatcher =
         [|\parentRunner getSub toParent env -> yesodSubDispatch
@@ -147,6 +148,7 @@ mkMDS rh = MkDispatchSettings
     , mds404 = [|notFound >> return ()|]
     , mds405 = [|badMethod >> return ()|]
     , mdsGetHandler = defaultGetHandler
+    , mdsShouldUnwrap = shouldUnwrap
     }
 
 -- | If the generation of @'YesodDispatch'@ instance require finer
@@ -156,10 +158,11 @@ mkMDS rh = MkDispatchSettings
 -- handy.
 mkDispatchInstance :: Type                -- ^ The master site type
                    -> Cxt                 -- ^ Context of the instance
+                   -> Bool                -- ^ Should unwrap handler
                    -> [ResourceTree a]    -- ^ The resource
                    -> DecsQ
-mkDispatchInstance master cxt res = do
-    clause' <- mkDispatchClause (mkMDS [|yesodRunner|]) res
+mkDispatchInstance master cxt shouldUnwrap res = do
+    clause' <- mkDispatchClause (mkMDS shouldUnwrap [|yesodRunner|]) res
     let thisDispatch = FunD 'yesodDispatch [clause']
     return [InstanceD cxt yDispatch [thisDispatch]]
   where
@@ -167,7 +170,7 @@ mkDispatchInstance master cxt res = do
 
 mkYesodSubDispatch :: [ResourceTree a] -> Q Exp
 mkYesodSubDispatch res = do
-    clause' <- mkDispatchClause (mkMDS [|subHelper . fmap toTypedContent|]) res
+    clause' <- mkDispatchClause (mkMDS False [|subHelper . fmap toTypedContent|]) res
     inner <- newName "inner"
     let innerFun = FunD inner [clause']
     helper <- newName "helper"

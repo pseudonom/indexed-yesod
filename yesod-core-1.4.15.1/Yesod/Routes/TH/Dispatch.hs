@@ -13,6 +13,7 @@ import Control.Monad (forM)
 import Data.List (foldl')
 import Control.Arrow (second)
 import System.Random (randomRIO)
+import Yesod.Core.Internal.Run (unwrap)
 import Yesod.Routes.TH.Types
 import Data.Char (toLower)
 
@@ -25,6 +26,7 @@ data MkDispatchSettings = MkDispatchSettings
     , mds404 :: Q Exp
     , mds405 :: Q Exp
     , mdsGetHandler :: Maybe String -> String -> Q Exp
+    , mdsShouldUnwrap :: Bool
     }
 
 data SDC = SDC
@@ -140,8 +142,15 @@ mkDispatchClause MkDispatchSettings {..} resources = do
                         allDyns = extraParams ++ dynsMulti
                         mkRunExp mmethod = do
                             runHandlerE <- mdsRunHandler
-                            handlerE' <- mdsGetHandler mmethod name
-                            let handlerE = foldl' AppE handlerE' allDyns
+                            handlerE'' <- mdsGetHandler mmethod name
+                            let handlerE' = foldl' AppE handlerE'' allDyns
+                            handlerE <-
+                              if mdsShouldUnwrap
+                              then do
+                                unwrapE <- [|unwrap|]
+                                return . ParensE $ unwrapE `AppE` handlerE'
+                              else do
+                                return handlerE'
                             return $ runHandlerE
                                 `AppE` handlerE
                                 `AppE` envExp

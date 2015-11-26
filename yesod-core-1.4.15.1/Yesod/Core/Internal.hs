@@ -5,3 +5,5 @@ module Yesod.Core.Internal
     ) where
 
 import Yesod.Core.Internal.Request as X (randomString, parseWaiRequest)
+import Yesod.Core.Internal.TH as X (mkYesodGeneral)
+import Yesod.Core.Internal.Run as X (ToHandler (..))
