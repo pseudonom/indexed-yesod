@@ -63,3 +63,4 @@ executable         hello-world
                  , time
                  , mtl
                  , yesod-core
+                 , blaze-markup

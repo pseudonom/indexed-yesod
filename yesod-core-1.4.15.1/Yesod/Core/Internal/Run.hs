@@ -62,11 +62,6 @@ newtype WrappedBS = WrappedBS { unWrappedBS :: S8.ByteString }
 instance NFData WrappedBS
 #endif
 
-class ToHandler n where
-  unwrap :: n site m a -> HandlerT site m a
-instance ToHandler HandlerT where
-  unwrap = id
-
 -- | Function used internally by Yesod in the process of converting a
 -- 'HandlerT' into an 'Application'. Should not be needed by users.
 runHandler :: ToTypedContent c

@@ -32,13 +32,13 @@ import Yesod.Core.Internal.Run
 mkYesod :: String -- ^ name of the argument datatype
         -> [ResourceTree String]
         -> Q [Dec]
-mkYesod name = fmap (uncurry (++)) . mkYesodGeneral name [] False False
+mkYesod name = fmap (uncurry (++)) . mkYesodGeneral name [] False return
 
 mkYesodWith :: String
             -> [Either String [String]]
             -> [ResourceTree String]
             -> Q [Dec]
-mkYesodWith name args = fmap (uncurry (++)) . mkYesodGeneral name args False False
+mkYesodWith name args = fmap (uncurry (++)) . mkYesodGeneral name args False return
 
 -- | Sometimes, you will want to declare your routes in one file and define
 -- your handlers elsewhere. For example, this is the only way to break up a
@@ -53,11 +53,11 @@ mkYesodSubData name res = mkYesodDataGeneral name True res
 mkYesodDataGeneral :: String -> Bool -> [ResourceTree String] -> Q [Dec]
 mkYesodDataGeneral name isSub res = do
     let (name':rest) = words name
-    fmap fst $ mkYesodGeneral name' (fmap Left rest) isSub False res
+    fmap fst $ mkYesodGeneral name' (fmap Left rest) isSub return res
 
 -- | See 'mkYesodData'.
 mkYesodDispatch :: String -> [ResourceTree String] -> Q [Dec]
-mkYesodDispatch name = fmap snd . mkYesodGeneral name [] False False
+mkYesodDispatch name = fmap snd . mkYesodGeneral name [] False return
 
 -- | Get the Handler and Widget type synonyms for the given site.
 masterTypeSyns :: [Name] -> Type -> [Dec]
@@ -71,13 +71,13 @@ masterTypeSyns vs site =
 -- | 'Left' arguments indicate a monomorphic type, a 'Right' argument
 --   indicates a polymorphic type, and provides the list of classes
 --   the type must be instance of.
-mkYesodGeneral :: String                   -- ^ foundation type
-               -> [Either String [String]] -- ^ arguments for the type
-               -> Bool                     -- ^ is this a subsite
-               -> Bool                     -- ^ do we need to accept generalized handlers
+mkYesodGeneral :: String                    -- ^ foundation type
+               -> [Either String [String]]  -- ^ arguments for the type
+               -> Bool                      -- ^ is this a subsite
+               -> (Exp -> Q Exp)            -- ^ unwrap handler
                -> [ResourceTree String]
                -> Q([Dec],[Dec])
-mkYesodGeneral namestr args isSub shouldUnwrap resS = do
+mkYesodGeneral namestr args isSub f resS = do
     mname <- lookupTypeName namestr
     arity <- case mname of
                Just name -> do
@@ -113,7 +113,7 @@ mkYesodGeneral namestr args isSub shouldUnwrap resS = do
         res = map (fmap parseType) resS
     renderRouteDec <- mkRenderRouteInstance site res
     routeAttrsDec  <- mkRouteAttrsInstance site res
-    dispatchDec    <- mkDispatchInstance site cxt shouldUnwrap res
+    dispatchDec    <- mkDispatchInstance site cxt f res
     parse <- mkParseRouteInstance site res
     let rname = mkName $ "resources" ++ namestr
     eres <- lift resS
@@ -130,8 +130,8 @@ mkYesodGeneral namestr args isSub shouldUnwrap resS = do
             ]
     return (dataDec, dispatchDec)
 
-mkMDS :: Bool -> Q Exp -> MkDispatchSettings
-mkMDS shouldUnwrap rh = MkDispatchSettings
+mkMDS :: (Exp -> Q Exp) -> Q Exp -> MkDispatchSettings a site b
+mkMDS f rh = MkDispatchSettings
     { mdsRunHandler = rh
     , mdsSubDispatcher =
         [|\parentRunner getSub toParent env -> yesodSubDispatch
@@ -148,7 +148,7 @@ mkMDS shouldUnwrap rh = MkDispatchSettings
     , mds404 = [|notFound >> return ()|]
     , mds405 = [|badMethod >> return ()|]
     , mdsGetHandler = defaultGetHandler
-    , mdsShouldUnwrap = shouldUnwrap
+    , mdsUnwrapper = f 
     }
 
 -- | If the generation of @'YesodDispatch'@ instance require finer
@@ -156,13 +156,13 @@ mkMDS shouldUnwrap rh = MkDispatchSettings
 -- hardly need this generality. However, in certain situations, like
 -- when writing library/plugin for yesod, this combinator becomes
 -- handy.
-mkDispatchInstance :: Type                -- ^ The master site type
-                   -> Cxt                 -- ^ Context of the instance
-                   -> Bool                -- ^ Should unwrap handler
-                   -> [ResourceTree a]    -- ^ The resource
+mkDispatchInstance :: Type                      -- ^ The master site type
+                   -> Cxt                       -- ^ Context of the instance
+                   -> (Exp -> Q Exp)            -- ^ Unwrap handler
+                   -> [ResourceTree c]          -- ^ The resource
                    -> DecsQ
-mkDispatchInstance master cxt shouldUnwrap res = do
-    clause' <- mkDispatchClause (mkMDS shouldUnwrap [|yesodRunner|]) res
+mkDispatchInstance master cxt f res = do
+    clause' <- mkDispatchClause (mkMDS f [|yesodRunner|]) res
     let thisDispatch = FunD 'yesodDispatch [clause']
     return [InstanceD cxt yDispatch [thisDispatch]]
   where
@@ -170,7 +170,7 @@ mkDispatchInstance master cxt shouldUnwrap res = do
 
 mkYesodSubDispatch :: [ResourceTree a] -> Q Exp
 mkYesodSubDispatch res = do
-    clause' <- mkDispatchClause (mkMDS False [|subHelper . fmap toTypedContent|]) res
+    clause' <- mkDispatchClause (mkMDS return [|subHelper . fmap toTypedContent|]) res
     inner <- newName "inner"
     let innerFun = FunD inner [clause']
     helper <- newName "helper"
